@@ -3,13 +3,16 @@ pkg load statistics;
 % ========================= Carregar Dados =========================
 disp("Carregando os dados...");
 % Alterar para o local onde estão salvos os dados
-% dados_base = dlmread('/IA-trabalho/Dados_Base.csv', ',');
-% classes_base = textread('/IA-trabalho/Classes_Base.csv', '%s', 'delimiter', ',');
-% dados_novos = dlmread('/IA-trabalho/Dados_Novos.csv', ',');
+disp("Carregando os dados_base...");
+dados_base = dlmread('IA-trabalho/Dados_Base.csv', ',');
+disp("Carregando as classes_base...");
+classes_base = textread('IA-trabalho/Classes_Base.csv', '%s', 'delimiter', ',');
+disp("Carregando os dados_novos...");
+dados_novos = dlmread('IA-trabalho/Dados_Novos.csv', ',');
 disp("Concluído!");
 
+
 % ========================= Normalização =========================
-% Normalizar os dados da base e os dados novos
 disp("Normalizando os dados_base...");
 dados_base_norm = zscore(dados_base);
 disp("Concluído!");
@@ -18,7 +21,40 @@ disp("Normalizando os dados_novos...");
 dados_novos_norm = zscore(dados_novos);
 disp("Concluído!");
 
-% ========================= PCA =========================
+
+% ========================= Transformação das Classes para Formato Binário =========================
+[classes_unicas, ~, classes_numericas] = unique(classes_base);
+num_classes = length(classes_unicas);
+num_amostras = length(classes_base);
+classes_binarias = eye(num_classes)(classes_numericas, :);
+
+% ========================= Oversampling =========================
+disp("Oversampling Iniciado..");
+contagem_classes = hist(classes_numericas, num_classes);
+min_class_count = min(contagem_classes);
+min_classes_idx = find(contagem_classes == min_class_count);
+dados_base_balanciado = dados_base_norm;
+classes_base_balanciado = classes_numericas;
+
+for i = 1:length(min_classes_idx)
+    min_class_idx = min_classes_idx(i);
+
+    amostras_minoritaria = dados_base_norm(classes_numericas == min_class_idx, :);
+
+    num_amostras_faltando = max(contagem_classes) - min_class_count;
+
+    num_amostras_faltando = min(num_amostras_faltando, size(amostras_minoritaria, 1));
+
+    amostras_duplicadas = amostras_minoritaria(randperm(size(amostras_minoritaria, 1), num_amostras_faltando), :);
+
+    dados_base_balanciado = [dados_base_balanciado; amostras_duplicadas];
+    classes_base_balanciado = [classes_base_balanciado; repmat(min_class_idx, num_amostras_faltando, 1)];
+end
+
+disp("Oversampling concluído para todas as classes minoritárias!");
+
+
+% ========================= PCA - Dados-Base =========================
 disp("Realizando PCA...");
 % Centralizar os dados
 dados_base_centralizados = dados_base_norm - mean(dados_base_norm);
@@ -29,142 +65,111 @@ covariancia = cov(dados_base_centralizados);
 % Ordenar os autovalores e selecionar as componentes principais
 [autovalores, indice] = sort(diag(autovalores), 'descend');
 autovetores = autovetores(:, indice);
-k = 10;  % número de componentes principais desejadas
-dados_reduzidos = dados_base_centralizados * autovetores(:, 1:k);
+pca = 2000;  % número de componentes principais desejadas
+dados_reduzidos = dados_base_centralizados * autovetores(:, 1:pca);
 disp("PCA concluído!");
 
-% Visualizar os dados projetados em 2D (se k >= 2)
+
+% ========================= Visualizar os dados projetados =========================
 figure;
 scatter(dados_reduzidos(:, 1), dados_reduzidos(:, 2), 10, classes_numericas, 'filled');
 title('Projeção dos Dados com PCA');
 xlabel('Primeira Componente Principal');
 ylabel('Segunda Componente Principal');
 
-% ========================= Transformação das Classes para Formato Binário =========================
-[classes_unicas, ~, classes_numericas] = unique(classes_base);
-num_classes = length(classes_unicas);  % Número de classes
-num_amostras = length(classes_base);
-classes_binarias = eye(num_classes)(classes_numericas, :);
 
-% ========================= Divisão dos Dados em Treinamento e Teste =========================
-disp("Dividindo os dados em treinamento e teste...");
-n_amostras = size(dados_reduzidos, 1);  % Total de amostras
-num_treinamento = round(0.8 * n_amostras);  % 80% para treinamento
+% ========================= Validação Cruzada k-Fold =========================
+k = 3;  % Número de folds
+disp(['Executando validação cruzada com ', num2str(k), ' folds...']);
 
-% Embaralhar os índices das amostras
-indices = randperm(n_amostras);
+% Gerar índices manualmente
+indices = repmat(1:k, 1, ceil(num_amostras / k));
+indices = indices(1:num_amostras);
+indices = indices(randperm(num_amostras));  % Embaralhar os índices
 
-% Selecionar índices para treinamento e teste
-indice_treinamento = indices(1:num_treinamento);
-indice_teste = indices(num_treinamento+1:end);
+f1_scores_fold = zeros(1, k);
 
-% Dividir os dados
-dados_treinamento = dados_reduzidos(indice_treinamento, :);
-classes_treinamento = classes_numericas(indice_treinamento);
-dados_teste = dados_reduzidos(indice_teste, :);
-classes_teste = classes_base(indice_teste);
+for fold = 1:k
+    disp(['Fold ', num2str(fold), ' de ', num2str(k)]);
 
-disp("Divisão concluída!");
+    % Divisão dos dados em treinamento e teste
+    teste_idx = (indices == fold);
+    treino_idx = ~teste_idx;
 
-% ========================= Criar a Rede Neural (MLP) =========================
-disp("Criando a rede neural...");
-% Definir parâmetros da rede neural
-num_neuronios_ocultos = 10;  % Número de neurônios na camada oculta
-num_epocas = 1000;  % Número de épocas de treinamento
-taxa_aprendizado = 0.01;  % Taxa de aprendizado
+    dados_treinamento = dados_base_balanciado(treino_idx, :);
+    classes_treinamento = classes_base_balanciado(treino_idx);
 
-% Inicializar pesos e bias
-tamanho_entrada = size(dados_treinamento, 2);  % Número de características
-tamanho_saida = num_classes;  % Número de classes
-pesos_entrada_oculta = rand(tamanho_entrada, num_neuronios_ocultos) * 0.01;
-bias_oculta = zeros(1, num_neuronios_ocultos);
-pesos_oculta_saida = rand(num_neuronios_ocultos, tamanho_saida) * 0.01;
-bias_saida = zeros(1, tamanho_saida);
+    dados_teste = dados_base_balanciado(teste_idx, :);
+    classes_teste = classes_base_balanciado(teste_idx);
 
-% Função de ativação sigmoid
-sigmoid = @(x) 1 ./ (1 + exp(-x));
-sigmoid_derivada = @(x) sigmoid(x) .* (1 - sigmoid(x));
+    % Inicializar rede neural (MLP)
+    num_neuronios_ocultos = 10;
+    num_epocas = 1000;
+    taxa_aprendizado = 0.01;
 
-% ========================= Treinamento da Rede =========================
-for epoca = 1:num_epocas
-    % Forward pass
-    camada_oculta = sigmoid(dados_treinamento * pesos_entrada_oculta + bias_oculta);
-    camada_saida = sigmoid(camada_oculta * pesos_oculta_saida + bias_saida);
+    tamanho_entrada = size(dados_treinamento, 2);
+    tamanho_saida = num_classes;
+    pesos_entrada_oculta = rand(tamanho_entrada, num_neuronios_ocultos) * 0.01;
+    bias_oculta = zeros(1, num_neuronios_ocultos);
+    pesos_oculta_saida = rand(num_neuronios_ocultos, tamanho_saida) * 0.01;
+    bias_saida = zeros(1, tamanho_saida);
 
-    % Cálculo do erro
-    erro = camada_saida - eye(num_classes)(classes_treinamento, :);
+    sigmoid = @(x) 1 ./ (1 + exp(-x));
+    sigmoid_derivada = @(x) sigmoid(x) .* (1 - sigmoid(x));
 
-    % Backpropagation
-    delta_saida = erro .* sigmoid_derivada(camada_saida);
-    delta_oculta = (delta_saida * pesos_oculta_saida') .* sigmoid_derivada(camada_oculta);
+    % Treinamento
+    for epoca = 1:num_epocas
+        camada_oculta = sigmoid(dados_treinamento * pesos_entrada_oculta + bias_oculta);
+        camada_saida = sigmoid(camada_oculta * pesos_oculta_saida + bias_saida);
 
-    % Atualização dos pesos e bias
-    pesos_oculta_saida -= taxa_aprendizado * (camada_oculta' * delta_saida);
-    bias_saida -= taxa_aprendizado * sum(delta_saida, 1);
+        erro = camada_saida - eye(num_classes)(classes_treinamento, :);
 
-    pesos_entrada_oculta -= taxa_aprendizado * (dados_treinamento' * delta_oculta);
-    bias_oculta -= taxa_aprendizado * sum(delta_oculta, 1);
+        delta_saida = erro .* sigmoid_derivada(camada_saida);
+        delta_oculta = (delta_saida * pesos_oculta_saida') .* sigmoid_derivada(camada_oculta);
 
-    % Exibir erro médio por época
-    if mod(epoca, 100) == 0
-        erro_medio = mean(abs(erro(:)));
-        disp(['Época ', num2str(epoca), ': Erro médio = ', num2str(erro_medio)]);
+        pesos_oculta_saida -= taxa_aprendizado * (camada_oculta' * delta_saida);
+        bias_saida -= taxa_aprendizado * sum(delta_saida, 1);
+
+        pesos_entrada_oculta -= taxa_aprendizado * (dados_treinamento' * delta_oculta);
+        bias_oculta -= taxa_aprendizado * sum(delta_oculta, 1);
     end
+
+    % Validação
+    camada_oculta_teste = sigmoid(dados_teste * pesos_entrada_oculta + bias_oculta);
+    camada_saida_teste = sigmoid(camada_oculta_teste * pesos_oculta_saida + bias_saida);
+
+    [~, classe_prevista] = max(camada_saida_teste, [], 2);
+
+    % Cálculo do F1-Score
+    f1_scores = zeros(1, num_classes);
+    for i = 1:num_classes
+        classes_binarias_reais = (classes_teste == i);
+        classes_binarias_previstas = (classe_prevista == i);
+
+        precisao = sum(classes_binarias_reais & classes_binarias_previstas) / (sum(classes_binarias_previstas) + eps);
+        recall = sum(classes_binarias_reais & classes_binarias_previstas) / (sum(classes_binarias_reais) + eps);
+
+        f1_scores(i) = 2 * (precisao * recall) / (precisao + recall + eps);
+    end
+
+    f1_scores_fold(fold) = mean(f1_scores);
+
 end
 
-% ========================= Validação nos Dados de Teste =========================
-disp("Validando nos dados de teste...");
-camada_oculta_teste = sigmoid(dados_teste * pesos_entrada_oculta + bias_oculta);
-camada_saida_teste = sigmoid(camada_oculta_teste * pesos_oculta_saida + bias_saida);
+% Resultado final
+f1_score_medio = mean(f1_scores_fold);
+disp(['F1-Score médio em validação cruzada: ', num2str(f1_score_medio)]);
 
-% Converter predições em classes
-[~, classe_prevista] = max(camada_saida_teste, [], 2);
-[~, ~, classes_teste] = unique(classes_teste);
 
-% ========================= Classificação dos Novos Dados =========================
-disp("Classificando os novos dados...");
+% ========================= Classificação dos Dados Novos =========================
+disp("Classificando os dados novos...");
+
+% Forward pass para os dados novos
 camada_oculta_novos = sigmoid(dados_novos_norm * pesos_entrada_oculta + bias_oculta);
 camada_saida_novos = sigmoid(camada_oculta_novos * pesos_oculta_saida + bias_saida);
 
-% Converter as previsões das classes em formato numérico
 [~, classes_previstas_novos] = max(camada_saida_novos, [], 2);
 
-% ========================= Salvar os Resultados em Arquivo CSV =========================
-disp("Salvando os resultados em arquivo CSV...");
-resultado = [dados_novos, classes_previstas_novos];  % Adicionar as classes previstas aos dados originais
-csvwrite('resultado_classificacao.csv', resultado);  % Salvar em arquivo CSV
-disp("Arquivo salvo com sucesso!");
-
-
-% ========================= Métricas de Desempenho =========================
-% Função para calcular a precisão
-function precisao = calcular_precisao(classes_reais, classes_previstas)
-  tp = sum(classes_reais == 1 & classes_previstas == 1);  % Verdadeiros positivos
-  fp = sum(classes_reais == 0 & classes_previstas == 1);  % Falsos positivos
-  precisao = tp / (tp + fp);  % Fórmula da precisão
-end
-
-% Função para calcular o recall
-function recall = calcular_recall(classes_reais, classes_previstas)
-  tp = sum(classes_reais == 1 & classes_previstas == 1);  % Verdadeiros positivos
-  fn = sum(classes_reais == 1 & classes_previstas == 0);  % Falsos negativos
-  recall = tp / (tp + fn);  % Fórmula do recall
-end
-
-% Calcular F1-Score
-f1_scores = zeros(1, num_classes);
-for i = 1:num_classes
-    classes_binarias_reais = (classes_teste == i);
-    classes_binarias_previstas = (classe_prevista == i);
-
-    precisao = calcular_precisao(classes_binarias_reais, classes_binarias_previstas);
-    recall = calcular_recall(classes_binarias_reais, classes_binarias_previstas);
-
-    f1_scores(i) = 2 * (precisao * recall) / (precisao + recall + eps);
-end
-
-% F1-Score ponderado
-contagem_classes = histc(classes_teste, 1:num_classes);
-f1_score_ponderado = sum(f1_scores .* contagem_classes') / sum(contagem_classes);
-disp(['F1-Score ponderado: ', num2str(f1_score_ponderado)]);
-
+disp("Classificação concluída!");
+disp("Classes previstas para os dados novos:");
+disp(classes_previstas_novos);
