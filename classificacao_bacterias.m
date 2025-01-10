@@ -4,12 +4,21 @@ pkg load statistics;
 disp("Carregando os dados...");
 % Alterar para o local onde estão salvos os dados
 disp("Carregando os dados_base...");
-dados_base = dlmread('IA-trabalho/Dados_Base.csv', ',');
+dados_base = dlmread('C:/Users/ferna/Desktop/Inteligência Artificial 1/IA-trabalho/Dados_Base.csv', ',');
 disp("Carregando as classes_base...");
-classes_base = textread('IA-trabalho/Classes_Base.csv', '%s', 'delimiter', ',');
+classes_base = textread('C:/Users/ferna/Desktop/Inteligência Artificial 1/IA-trabalho/Classes_Base.csv', '%s', 'delimiter', ',');
 disp("Carregando os dados_novos...");
-dados_novos = dlmread('IA-trabalho/Dados_Novos.csv', ',');
+dados_novos = dlmread('C:/Users/ferna/Desktop/Inteligência Artificial 1/IA-trabalho/Dados_Novos.csv', ',');
 disp("Concluído!");
+
+% ========================= Representação Gráfica Dados-Base =========================
+disp("Plotando os dados base...");
+figure;
+scatter(dados_base(:, 1), dados_base(:, 2), 50, 'filled');
+title("Representação Gráfica dos Dados Base");
+xlabel("Feature 1");
+ylabel("Feature 2");
+grid on;
 
 
 % ========================= Normalização =========================
@@ -173,3 +182,5 @@ camada_saida_novos = sigmoid(camada_oculta_novos * pesos_oculta_saida + bias_sai
 disp("Classificação concluída!");
 disp("Classes previstas para os dados novos:");
 disp(classes_previstas_novos);
+
+
